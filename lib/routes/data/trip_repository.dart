@@ -1,4 +1,5 @@
 import '../../iam/domain/user.dart';
+import '../../fleet/data/fleet_repository.dart';
 import '../domain/trip.dart';
 
 /// Demo store. Data survives navigation, but is lost when the process exits.
@@ -47,6 +48,26 @@ class TripRepository {
         .toList();
   }
 
+  List<Trip> assignments(User u, {String? plate, String? driver}) {
+    if (company(u).isEmpty) throw StateError('A company is required.');
+    return (_companies[company(u)] ?? [])
+        .where(
+          (t) =>
+              t.status != TripStatus.draft &&
+              t.status != TripStatus.completed &&
+              (plate == null ||
+                  FleetRepository.normalizePlate(t.plate) ==
+                      FleetRepository.normalizePlate(plate)) &&
+              (driver == null || t.driver == driver),
+        )
+        .toList()
+      ..sort(
+        (a, b) => (a.departure ?? DateTime(2100)).compareTo(
+          b.departure ?? DateTime(2100),
+        ),
+      );
+  }
+
   Trip create(User u) {
     if (!canPlan(u) || company(u).isEmpty)
       throw StateError('Planning permission required.');
@@ -73,7 +94,14 @@ class TripRepository {
         t.origin.trim().isEmpty ||
         t.departure == null ||
         t.stops.isEmpty ||
-        t.plate != 'ABC-123' ||
+        !FleetRepository.instance
+            .vehicles(u)
+            .any(
+              (v) =>
+                  FleetRepository.normalizePlate(v.plate) ==
+                      FleetRepository.normalizePlate(t.plate) &&
+                  v.status == VehicleStatus.enabled,
+            ) ||
         t.driver.isEmpty ||
         t.stops.any(
           (s) =>
@@ -86,16 +114,20 @@ class TripRepository {
         'Provide name, origin, departure, delivery cargo, enabled vehicle and driver.',
       );
     }
-    if ((_companies[t.company] ?? []).any(
-      (other) =>
-          other.id != t.id &&
-          other.status != TripStatus.draft &&
-          other.status != TripStatus.completed &&
-          (other.plate == t.plate || other.driver == t.driver),
-    )) {
-      throw StateError(
-        'Vehicle or driver is assigned to another active route.',
-      );
+    for (final other in assignments(u)) {
+      if (other.id == t.id) continue;
+      final sameVehicle =
+          FleetRepository.normalizePlate(other.plate) ==
+          FleetRepository.normalizePlate(t.plate);
+      if (sameVehicle || other.driver == t.driver) {
+        final resource = sameVehicle
+            ? 'Vehículo ${t.plate}'
+            : 'Conductor ${t.driver}';
+        throw StateError(
+          '$resource tiene conflicto con ${other.id} · ${other.name}. '
+          'Cierre ese viaje primero: no hay hora de llegada para calcular intervalos.',
+        );
+      }
     }
     save(u, t);
     t.status = TripStatus.published;
