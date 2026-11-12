@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../iam/domain/user.dart';
 import '../../routes/app_routes.dart';
+import '../../routes/presentation/routes_screen.dart';
 import '../../shared/theme/app_colors.dart';
 import '../../shared/widgets/rutana_app_bar.dart';
 import '../../shared/widgets/rutana_logo.dart';
-
 
 class MenuOption {
   final String title;
@@ -33,28 +33,33 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selected = 0;
 
   void _signOut() {
-
-    Navigator.pushNamedAndRemoveUntil(context, AppRoutes.login, (route) => false);
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      AppRoutes.login,
+      (route) => false,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-
     final user = ModalRoute.of(context)?.settings.arguments as User?;
     final option = menuOptions[_selected];
 
     return Scaffold(
       appBar: RutanaAppBar(
         title: option.title,
-        onProfileTap: () => ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Coming soon')),
-        ),
+        onProfileTap: () =>
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('Coming soon'))),
       ),
       drawer: _buildDrawer(user),
-      body: _selected == 0 ? _buildDashboard(user) : _buildComingSoon(option),
+      body: _selected == 0
+          ? _buildDashboard(user)
+          : _selected == 1
+          ? RoutesScreen(user: user)
+          : _buildComingSoon(option),
     );
   }
-
 
   Widget _buildDrawer(User? user) {
     return Drawer(
@@ -69,9 +74,14 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 const RutanaLogo(size: 40),
                 const SizedBox(height: 12),
-                Text(user?.fullName ?? '',
-                    style: const TextStyle(color: Colors.white, fontSize: 18)),
-                Text(user?.email ?? '', style: const TextStyle(color: Colors.white70)),
+                Text(
+                  user?.fullName ?? '',
+                  style: const TextStyle(color: Colors.white, fontSize: 18),
+                ),
+                Text(
+                  user?.email ?? '',
+                  style: const TextStyle(color: Colors.white70),
+                ),
               ],
             ),
           ),
@@ -98,7 +108,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-
   Widget _buildDashboard(User? user) {
     return CustomScrollView(
       slivers: [
@@ -112,22 +121,37 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Welcome, ${user?.fullName ?? ''}',
-                        style: const TextStyle(fontSize: 22, color: AppColors.navyDark)),
+                    Text(
+                      'Welcome, ${user?.fullName ?? ''}',
+                      style: const TextStyle(
+                        fontSize: 22,
+                        color: AppColors.navyDark,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     if (user != null)
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: AppColors.yellow,
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Text(user.role,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        child: Text(
+                          user.role,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
                       ),
                     const SizedBox(height: 8),
-                    const Text('What do you want to manage today?',
-                        style: TextStyle(color: AppColors.gray)),
+                    const Text(
+                      'What do you want to manage today?',
+                      style: TextStyle(color: AppColors.gray),
+                    ),
                   ],
                 ),
               ),
@@ -142,7 +166,7 @@ class _HomeScreenState extends State<HomeScreen> {
               maxCrossAxisExtent: 220,
               mainAxisSpacing: 16,
               crossAxisSpacing: 16,
-              mainAxisExtent: 112,
+              mainAxisExtent: 148,
             ),
             itemCount: menuOptions.length - 1,
             itemBuilder: (context, index) {
@@ -160,8 +184,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Icon(item.icon, size: 32, color: AppColors.navy),
-                        Text(item.title,
-                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                        Text(
+                          item.title,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
+                          ),
+                        ),
                       ],
                     ),
                   ),
