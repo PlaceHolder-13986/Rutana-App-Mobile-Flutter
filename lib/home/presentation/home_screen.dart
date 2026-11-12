@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../iam/domain/user.dart';
+import '../../fleet/presentation/fleet_screen.dart';
 import '../../routes/app_routes.dart';
 import '../../routes/presentation/routes_screen.dart';
 import '../../shared/theme/app_colors.dart';
@@ -57,6 +58,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ? _buildDashboard(user)
           : _selected == 1
           ? RoutesScreen(user: user)
+          : _selected == 2
+          ? FleetScreen(user: user)
           : _buildComingSoon(option),
     );
   }

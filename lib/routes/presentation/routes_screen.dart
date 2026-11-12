@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../iam/domain/user.dart';
+import '../../fleet/data/fleet_repository.dart';
 import '../../iam/data/user_repository.dart';
 import '../domain/trip.dart';
 import '../data/trip_repository.dart';
@@ -310,16 +311,29 @@ class _TripEditorState extends State<TripEditor> {
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
-          initialValue: draft.plate.isEmpty ? null : draft.plate,
+          initialValue:
+              FleetRepository.instance
+                  .vehicles(widget.user)
+                  .any(
+                    (v) =>
+                        v.plate == draft.plate &&
+                        v.status == VehicleStatus.enabled,
+                  )
+              ? draft.plate
+              : null,
           decoration: const InputDecoration(
-            labelText: 'Enabled vehicle (demo)',
+            labelText: 'Vehículo habilitado · flota',
           ),
-          items: const [
-            DropdownMenuItem(
-              value: 'ABC-123',
-              child: Text('ABC-123 · enabled'),
-            ),
-          ],
+          items: FleetRepository.instance
+              .vehicles(widget.user)
+              .where((v) => v.status == VehicleStatus.enabled)
+              .map(
+                (v) => DropdownMenuItem(
+                  value: v.plate,
+                  child: Text('${v.plate} · ${v.capacity} kg'),
+                ),
+              )
+              .toList(),
           onChanged: (v) => draft.plate = v ?? '',
         ),
         const SizedBox(height: 12),
@@ -338,6 +352,9 @@ class _TripEditorState extends State<TripEditor> {
         ),
         const SizedBox(height: 16),
         if (driverNotice != null) Text(driverNotice!),
+        const Text(
+          'Sin hora de llegada: vehículo y conductor quedan reservados hasta cerrar el viaje. La carga se registra en unidades, no en kg.',
+        ),
         const Text('Delivery stops · order defines itinerary'),
         for (var i = 0; i < draft.stops.length; i++) stopEditor(i),
         OutlinedButton.icon(
