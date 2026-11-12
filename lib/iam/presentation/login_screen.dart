@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../routes/app_routes.dart';
@@ -35,6 +38,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _signIn() async {
+    if (_loading) return;
     final email = _emailController.text;
     final password = _passwordController.text;
 
@@ -48,23 +52,59 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = '';
     });
 
-    final user = await _repository.signIn(email, password);
-
-    if (!mounted) return; // la pantalla pudo cerrarse mientras se esperaba
-    setState(() => _loading = false);
-
-    if (user != null) {
-      // 👉 pushReplacementNamed: va al Home y QUITA el login de la pila
-      //    (el botón "atrás" no regresa al login). Se envía el usuario como argumento.
-      Navigator.pushReplacementNamed(context, AppRoutes.home, arguments: user);
-    } else {
-      setState(() => _error = 'Incorrect email or password');
+    try {
+      if (kIsWeb ||
+          defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.linux) {
+        setState(
+          () => _error = 'Local SQLite sign-in is not configured for this platform. Run the app on the Android emulator.',
+        );
+        return;
+      }
+      final user = await _repository
+          .signIn(email, password)
+          .timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (user != null) {
+        Navigator.pushReplacementNamed(
+          context,
+          AppRoutes.home,
+          arguments: user,
+        );
+      } else {
+        setState(() => _error = 'Incorrect email or password');
+      }
+    } on TimeoutException {
+      if (mounted) {
+        setState(
+          () => _error =
+              'Opening the local database took too long. Please retry.',
+        );
+      }
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'local sign-in',
+        ),
+      );
+      if (mounted) {
+        setState(
+          () => _error = 'Could not access the local database. Please restart the app and retry.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _goToRegister() async {
     // 👉 pushNamed + await: espera a que Register se cierre y recibe el email registrado
-    final registeredEmail = await Navigator.pushNamed(context, AppRoutes.register);
+    final registeredEmail = await Navigator.pushNamed(
+      context,
+      AppRoutes.register,
+    );
 
     if (registeredEmail is String && mounted) {
       setState(() {
@@ -97,9 +137,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 16),
 
                   if (_message.isNotEmpty) ...[
-                    Text(_message,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppColors.success)),
+                    Text(
+                      _message,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: AppColors.success),
+                    ),
                     const SizedBox(height: 16),
                   ],
 
@@ -123,8 +165,13 @@ class _LoginScreenState extends State<LoginScreen> {
                     decoration: InputDecoration(
                       labelText: 'Password',
                       suffixIcon: IconButton(
-                        icon: Icon(_showPassword ? Icons.visibility_off : Icons.visibility),
-                        onPressed: () => setState(() => _showPassword = !_showPassword),
+                        icon: Icon(
+                          _showPassword
+                              ? Icons.visibility_off
+                              : Icons.visibility,
+                        ),
+                        onPressed: () =>
+                            setState(() => _showPassword = !_showPassword),
                       ),
                     ),
                     onChanged: (_) => setState(() => _error = ''),
@@ -144,12 +191,16 @@ class _LoginScreenState extends State<LoginScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.yellow,
                         foregroundColor: AppColors.navyDark,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
                       child: _loading
                           ? const SizedBox(
-                          width: 20, height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2))
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
                           : const Text('Log in'),
                     ),
                   ),
@@ -161,7 +212,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       onPressed: _goToRegister,
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.navyDark,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
                       child: const Text('Create an account'),
                     ),
@@ -172,8 +225,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('Coming soon')),
                     ),
-                    child: const Text('Forgot your password?',
-                        style: TextStyle(color: AppColors.navyDark)),
+                    child: const Text(
+                      'Forgot your password?',
+                      style: TextStyle(color: AppColors.navyDark),
+                    ),
                   ),
                   const SizedBox(height: 8),
 
