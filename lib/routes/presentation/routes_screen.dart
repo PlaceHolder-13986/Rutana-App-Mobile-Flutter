@@ -5,15 +5,19 @@ import '../../fleet/data/fleet_repository.dart';
 import '../../iam/data/user_repository.dart';
 import '../domain/trip.dart';
 import '../data/trip_repository.dart';
+import 'route_planning_screen.dart';
+import 'widgets/new_route_modal.dart';
 
 String statusLabel(TripStatus s) =>
     ['Draft', 'Published', 'In progress', 'Completed'][s.index];
+
 String departureLabel(DateTime? d) =>
     d == null ? 'Not scheduled' : d.toLocal().toString().substring(0, 16);
 
 class RoutesScreen extends StatefulWidget {
   final User? user;
   const RoutesScreen({super.key, required this.user});
+
   @override
   State<RoutesScreen> createState() => _RoutesScreenState();
 }
@@ -23,6 +27,7 @@ class _RoutesScreenState extends State<RoutesScreen> {
   late Future<List<Trip>> data;
   String query = '';
   TripStatus? filter;
+
   @override
   void initState() {
     super.initState();
@@ -35,15 +40,42 @@ class _RoutesScreenState extends State<RoutesScreen> {
         : repo.list(widget.user!);
   }
 
+  Future<void> _createNewRoute() async {
+    if (widget.user == null) return;
+    final trip = await NewRouteModal.show(context, widget.user!);
+    if (trip != null && mounted) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => RoutePlanningScreen(
+            user: widget.user!,
+            trip: trip,
+          ),
+        ),
+      );
+      if (mounted) setState(reload);
+    }
+  }
+
   Future<void> open(Trip trip, {bool edit = false}) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute<void>(
-        builder: (_) => edit
-            ? TripEditor(user: widget.user!, trip: trip)
-            : TripDetail(user: widget.user!, trip: trip),
-      ),
-    );
+    if (trip.status == TripStatus.draft && edit) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => RoutePlanningScreen(
+            user: widget.user!,
+            trip: trip,
+          ),
+        ),
+      );
+    } else {
+      await Navigator.push(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => TripDetail(user: widget.user!, trip: trip),
+        ),
+      );
+    }
     if (mounted) {
       setState(reload);
     }
@@ -51,159 +83,163 @@ class _RoutesScreenState extends State<RoutesScreen> {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(16),
-    child: Column(
-      children: [
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          crossAxisAlignment: WrapCrossAlignment.center,
+        padding: const EdgeInsets.all(16),
+        child: Column(
           children: [
-            if (widget.user != null && repo.canPlan(widget.user!))
-              FilledButton.icon(
-                onPressed: () => open(repo.create(widget.user!), edit: true),
-                icon: const Icon(Icons.add),
-                label: const Text('New route'),
-              ),
-            const Text('Demo data · stored in memory'),
-          ],
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          decoration: const InputDecoration(
-            labelText: 'Search code, destination or plate',
-            prefixIcon: Icon(Icons.search),
-          ),
-          onChanged: (v) => setState(() => query = v.toLowerCase()),
-        ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<TripStatus>(
-          initialValue: filter,
-          decoration: const InputDecoration(labelText: 'Status'),
-          items: [
-            const DropdownMenuItem(value: null, child: Text('All')),
-            ...TripStatus.values.map(
-              (s) => DropdownMenuItem(value: s, child: Text(statusLabel(s))),
-            ),
-          ],
-          onChanged: (v) => setState(() => filter = v),
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: FutureBuilder<List<Trip>>(
-            future: data,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done)
-                return const Center(child: CircularProgressIndicator());
-              if (snapshot.hasError)
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('${snapshot.error}'),
-                      TextButton(
-                        onPressed: () => setState(reload),
-                        child: const Text('Retry'),
-                      ),
-                    ],
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (widget.user != null && repo.canPlan(widget.user!))
+                  FilledButton.icon(
+                    onPressed: _createNewRoute,
+                    icon: const Icon(Icons.add),
+                    label: const Text('New route'),
                   ),
-                );
-              final trips = snapshot.data!
-                  .where(
-                    (t) =>
-                        (filter == null || t.status == filter) &&
-                        '${t.id} ${t.plate} ${t.stops.map((s) => s.site).join(' ')}'
-                            .toLowerCase()
-                            .contains(query),
-                  )
-                  .toList();
-              if (trips.isEmpty)
-                return const Center(child: Text('No routes found.'));
-              return LayoutBuilder(
-                builder: (context, size) {
-                  if (size.maxWidth < 1000)
-                    return ListView(
-                      children: trips
-                          .map(
-                            (t) => Card(
-                              child: ListTile(
-                                title: Text('${t.id} · ${t.name}'),
-                                subtitle: Text(
-                                  '${departureLabel(t.departure)}\n${t.origin} → ${t.stops.map((s) => s.site).join(' → ')}\n${t.plate} · ${t.driver}\n${t.stops.where((s) => s.result != null).length}/${t.stops.length} stops · ${statusLabel(t.status)}',
-                                ),
-                                isThreeLine: false,
-                                onTap: () => open(t),
-                              ),
-                            ),
-                          )
-                          .toList(),
-                    );
-                  return SingleChildScrollView(
-                    child: SizedBox(
-                      width: size.maxWidth,
-                      child: DataTable(
-                        columnSpacing: 12,
-                        columns: const [
-                          DataColumn(label: Text('Route / departure')),
-                          DataColumn(label: Text('Itinerary')),
-                          DataColumn(label: Text('Vehicle / driver')),
-                          DataColumn(label: Text('Progress / status')),
+                const Text('Demo data · stored in memory'),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              decoration: const InputDecoration(
+                labelText: 'Search code, destination or plate',
+                prefixIcon: Icon(Icons.search),
+              ),
+              onChanged: (v) => setState(() => query = v.toLowerCase()),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<TripStatus>(
+              initialValue: filter,
+              decoration: const InputDecoration(labelText: 'Status'),
+              items: [
+                const DropdownMenuItem(value: null, child: Text('All')),
+                ...TripStatus.values.map(
+                  (s) => DropdownMenuItem(value: s, child: Text(statusLabel(s))),
+                ),
+              ],
+              onChanged: (v) => setState(() => filter = v),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: FutureBuilder<List<Trip>>(
+                future: data,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('${snapshot.error}'),
+                          TextButton(
+                            onPressed: () => setState(reload),
+                            child: const Text('Retry'),
+                          ),
                         ],
-                        rows: trips
-                            .map(
-                              (t) => DataRow(
-                                cells: [
-                                  DataCell(
-                                    SizedBox(
-                                      width: 180,
-                                      child: Text(
-                                        '${t.id} · ${t.name}\n${departureLabel(t.departure)}',
-                                      ),
-                                    ),
-                                    onTap: () => open(t),
-                                  ),
-                                  DataCell(
-                                    SizedBox(
-                                      width: 230,
-                                      child: Text(
-                                        '${t.origin} → ${t.stops.map((s) => s.site).join(' → ')}',
-                                        maxLines: 3,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                    onTap: () => open(t),
-                                  ),
-                                  DataCell(
-                                    SizedBox(
-                                      width: 180,
-                                      child: Text(
-                                        '${t.plate}\n${t.driver}',
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                    onTap: () => open(t),
-                                  ),
-                                  DataCell(
-                                    Text(
-                                      '${t.stops.where((s) => s.result != null).length}/${t.stops.length} · ${statusLabel(t.status)}',
-                                    ),
-                                    onTap: () => open(t),
-                                  ),
-                                ],
-                              ),
-                            )
-                            .toList(),
                       ),
-                    ),
+                    );
+                  }
+                  final trips = snapshot.data!
+                      .where(
+                        (t) =>
+                            (filter == null || t.status == filter) &&
+                            '${t.id} ${t.plate} ${t.stops.map((s) => s.site).join(' ')}'
+                                .toLowerCase()
+                                .contains(query),
+                      )
+                      .toList();
+                  if (trips.isEmpty) {
+                    return const Center(child: Text('No routes found.'));
+                  }
+                  return LayoutBuilder(
+                    builder: (context, size) {
+                      if (size.maxWidth < 1000) {
+                        return ListView(
+                          children: trips
+                              .map(
+                                (t) => Card(
+                                  child: ListTile(
+                                    title: Text('${t.id} · ${t.name}'),
+                                    subtitle: Text(
+                                      '${departureLabel(t.departure)}\n${t.origin} → ${t.stops.isEmpty ? (t.selectedLocations.isEmpty ? 'Sin paradas' : t.selectedLocations.map((l) => l.siteName).join(' → ')) : t.stops.map((s) => s.site).join(' → ')}\n${t.plate.isEmpty ? 'Sin vehículo' : t.plate} · ${t.driver.isEmpty ? 'Sin conductor' : t.driver}\n${t.stops.where((s) => s.result != null).length}/${t.stops.length} stops · ${statusLabel(t.status)}',
+                                    ),
+                                    isThreeLine: true,
+                                    onTap: () => open(t, edit: t.status == TripStatus.draft),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        );
+                      }
+                      return SingleChildScrollView(
+                        child: SizedBox(
+                          width: size.maxWidth,
+                          child: DataTable(
+                            columnSpacing: 12,
+                            columns: const [
+                              DataColumn(label: Text('Route / departure')),
+                              DataColumn(label: Text('Itinerary')),
+                              DataColumn(label: Text('Vehicle / driver')),
+                              DataColumn(label: Text('Progress / status')),
+                            ],
+                            rows: trips
+                                .map(
+                                  (t) => DataRow(
+                                    cells: [
+                                      DataCell(
+                                        SizedBox(
+                                          width: 180,
+                                          child: Text(
+                                            '${t.id} · ${t.name}\n${departureLabel(t.departure)}',
+                                          ),
+                                        ),
+                                        onTap: () => open(t, edit: t.status == TripStatus.draft),
+                                      ),
+                                      DataCell(
+                                        SizedBox(
+                                          width: 230,
+                                          child: Text(
+                                            '${t.origin} → ${t.stops.isEmpty ? (t.selectedLocations.isEmpty ? 'Sin paradas' : t.selectedLocations.map((l) => l.siteName).join(' → ')) : t.stops.map((s) => s.site).join(' → ')}',
+                                            maxLines: 3,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        onTap: () => open(t, edit: t.status == TripStatus.draft),
+                                      ),
+                                      DataCell(
+                                        SizedBox(
+                                          width: 180,
+                                          child: Text(
+                                            '${t.plate.isEmpty ? 'Sin vehículo' : t.plate}\n${t.driver.isEmpty ? 'Sin conductor' : t.driver}',
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        onTap: () => open(t, edit: t.status == TripStatus.draft),
+                                      ),
+                                      DataCell(
+                                        Text(
+                                          '${t.stops.where((s) => s.result != null).length}/${t.stops.length} · ${statusLabel(t.status)}',
+                                        ),
+                                        onTap: () => open(t, edit: t.status == TripStatus.draft),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
+                      );
+                    },
                   );
                 },
-              );
-            },
-          ),
+              ),
+            ),
+          ],
         ),
-      ],
-    ),
-  );
+      );
 }
 
 class TripEditor extends StatefulWidget {
@@ -226,15 +262,17 @@ class _TripEditorState extends State<TripEditor> {
     UserRepository()
         .driversForCompany(widget.user)
         .then((users) {
-          if (mounted)
+          if (mounted) {
             setState(() => drivers = users.map((u) => u.email).toList());
+          }
         })
         .catchError((Object e) {
-          if (mounted)
+          if (mounted) {
             setState(
               () => driverNotice =
                   'Local users unavailable; demo driver available.',
             );
+          }
         });
   }
 
@@ -254,6 +292,7 @@ class _TripEditorState extends State<TripEditor> {
       onChanged: change,
     ),
   );
+
   void save(bool publish) {
     try {
       final repo = TripRepository.instance;
@@ -296,7 +335,7 @@ class _TripEditorState extends State<TripEditor> {
                 draft.departure ?? DateTime.now(),
               ),
             );
-            if (time != null)
+            if (time != null) {
               setState(
                 () => draft.departure = DateTime(
                   date.year,
@@ -306,6 +345,7 @@ class _TripEditorState extends State<TripEditor> {
                   time.minute,
                 ),
               );
+            }
           },
           child: Text('Departure: ${departureLabel(draft.departure)}'),
         ),
@@ -385,6 +425,7 @@ class _TripEditorState extends State<TripEditor> {
       ],
     ),
   );
+
   Widget stopEditor(int i) {
     final s = draft.stops[i];
     return Card(
@@ -469,6 +510,7 @@ class TripDetail extends StatefulWidget {
   final User user;
   final Trip trip;
   const TripDetail({super.key, required this.user, required this.trip});
+
   @override
   State<TripDetail> createState() => _TripDetailState();
 }
@@ -476,6 +518,7 @@ class TripDetail extends StatefulWidget {
 class _TripDetailState extends State<TripDetail> {
   final repo = TripRepository.instance;
   Trip get t => widget.trip;
+
   void act(VoidCallback action) {
     try {
       action();
@@ -487,13 +530,15 @@ class _TripDetailState extends State<TripDetail> {
   }
 
   Widget button(String label, VoidCallback action) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 6),
-    child: FilledButton(onPressed: () => act(action), child: Text(label)),
-  );
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: FilledButton(onPressed: () => act(action), child: Text(label)),
+      );
+
   @override
   Widget build(BuildContext context) {
     final plan = repo.canPlan(widget.user),
         operate = repo.canOperate(widget.user, t);
+
     return DefaultTabController(
       length: 4,
       child: Scaffold(
@@ -536,7 +581,7 @@ class _TripDetailState extends State<TripDetail> {
                     await Navigator.push(
                       context,
                       MaterialPageRoute<void>(
-                        builder: (_) => TripEditor(user: widget.user, trip: t),
+                        builder: (_) => RoutePlanningScreen(user: widget.user, trip: t),
                       ),
                     );
                     if (context.mounted) Navigator.pop(context);
