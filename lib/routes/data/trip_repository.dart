@@ -2,16 +2,20 @@ import '../../iam/domain/user.dart';
 import '../../fleet/data/fleet_repository.dart';
 import '../domain/trip.dart';
 
-/// Demo store. Data survives navigation, but is lost when the process exits.
+/// Store de Rutana. Almacena rutas en memoria durante la ejecución de la app.
 class TripRepository {
   static final instance = TripRepository();
   final Map<String, List<Trip>> _companies = {};
   int _sequence = 1;
+
   String company(User u) =>
       u.ruc.trim().isNotEmpty ? u.ruc.trim() : u.company.trim();
+
   bool canPlan(User u) => u.role == 'Administrator';
+
   bool canOperate(User u, Trip t) =>
       canPlan(u) || (u.role == 'Driver' && t.driver == u.email);
+
   void check(User u, Trip t, {bool planning = false}) {
     if (company(u).isEmpty ||
         t.company != company(u) ||
@@ -69,8 +73,9 @@ class TripRepository {
   }
 
   Trip create(User u) {
-    if (!canPlan(u) || company(u).isEmpty)
+    if (!canPlan(u) || company(u).isEmpty) {
       throw StateError('Planning permission required.');
+    }
     return Trip('RT-${_sequence++}', company(u));
   }
 
@@ -85,6 +90,41 @@ class TripRepository {
     } else {
       list[i] = t;
     }
+  }
+
+  void publishFromPlanning(User u, Trip t) {
+    check(u, t, planning: true);
+    if (t.selectedLocations.isEmpty || (t.assignedTeam == null && t.driver.isEmpty)) {
+      throw StateError('Route incomplete: Add at least one location and an assigned team to publish');
+    }
+
+    final selectedDriver = t.assignedTeam?.driver ?? t.driver;
+    final selectedPlate = t.plate.isEmpty ? 'ABC-123' : t.plate;
+
+    for (final other in assignments(u)) {
+      if (other.id == t.id) continue;
+      final sameVehicle =
+          FleetRepository.normalizePlate(other.plate) ==
+          FleetRepository.normalizePlate(selectedPlate);
+      if (sameVehicle || other.driver == selectedDriver) {
+        throw StateError('Team unavailable for selected timeframe');
+      }
+    }
+
+    t.driver = selectedDriver;
+    t.plate = selectedPlate;
+    if (t.stops.isEmpty) {
+      t.stops = t.selectedLocations.map((loc) {
+        return Stop(
+          loc.siteName,
+          loc.address,
+          loc.clientName,
+          [Cargo('Entregas / Carga', 10)],
+        );
+      }).toList();
+    }
+    save(u, t);
+    t.status = TripStatus.published;
   }
 
   void publish(User u, Trip t) {
