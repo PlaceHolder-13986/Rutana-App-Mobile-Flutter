@@ -27,7 +27,9 @@ class Stop {
   factory Stop.fromLocation(ClientLocation location, List<Cargo> cargo) => Stop(
     location.siteName,
     location.address,
-    location.contactLabel,
+    location.clientId == null && location.contactLabel.isEmpty
+        ? location.clientName
+        : location.contactLabel,
     cargo,
     location: location,
   );

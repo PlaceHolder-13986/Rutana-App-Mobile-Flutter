@@ -24,6 +24,23 @@ class ClientLocation {
   final double? latitude, longitude;
   final bool isActive;
 
+  ClientLocation withClientName(String name) => ClientLocation(
+    id: id,
+    clientId: clientId,
+    clientName: name,
+    siteName: siteName,
+    address: address,
+    department: department,
+    province: province,
+    district: district,
+    reference: reference,
+    contact: contact,
+    phone: phone,
+    latitude: latitude,
+    longitude: longitude,
+    isActive: isActive,
+  );
+
   String get contactLabel =>
       [contact, phone].where((v) => v.isNotEmpty).join(' · ');
 }

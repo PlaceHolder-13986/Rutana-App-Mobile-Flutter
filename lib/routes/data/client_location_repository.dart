@@ -72,6 +72,13 @@ class ClientLocationRepository {
       active: previous?.active ?? true,
     );
     catalog.clients[saved.id] = saved;
+    if (previous != null && previous.legalName != saved.legalName) {
+      catalog.sites.updateAll(
+        (_, site) => site.clientId == saved.id
+            ? site.withClientName(saved.legalName)
+            : site,
+      );
+    }
     return saved;
   }
 
@@ -143,8 +150,9 @@ class ClientLocationRepository {
     if (snapshot.clientId == null) return null;
     final catalog = _catalog(user);
     final owner = catalog.clients[snapshot.clientId];
-    if (owner == null || !owner.active)
+    if (owner == null || !owner.active) {
       return 'Cliente inactivo o no disponible';
+    }
     final site = catalog.sites[snapshot.id];
     if (site == null || site.clientId != owner.id || !site.isActive) {
       return 'Sede inactiva o no disponible';

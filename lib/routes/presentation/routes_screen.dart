@@ -586,7 +586,7 @@ class _TripDetailState extends State<TripDetail> {
                         if (loc.contactLabel.isNotEmpty) loc.contactLabel,
                         if (loc.latitude != null)
                           '${loc.latitude}, ${loc.longitude}',
-                        if (_catalogStatus(loc) case final status?) status,
+                        ?_catalogStatus(loc),
                       ],
                     ].join('\n'),
                   ),
@@ -609,7 +609,7 @@ class _TripDetailState extends State<TripDetail> {
                           loc.clientName,
                           if (loc.latitude != null)
                             '${loc.latitude}, ${loc.longitude}',
-                          if (_catalogStatus(loc) case final status?) status,
+                          ?_catalogStatus(loc),
                         ],
                         'ETA unavailable · ${stop.result?.name ?? 'Pending'}',
                       ].join('\n'),
