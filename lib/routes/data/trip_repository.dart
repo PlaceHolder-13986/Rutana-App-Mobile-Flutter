@@ -1,4 +1,6 @@
 import '../../iam/domain/user.dart';
+import '../../iam/domain/company_access.dart';
+import '../../iam/data/company_members_repository.dart';
 import '../../fleet/data/fleet_repository.dart';
 import '../domain/trip.dart';
 import 'client_location_repository.dart';
@@ -9,13 +11,26 @@ class TripRepository {
   final Map<String, List<Trip>> _companies = {};
   int _sequence = 1;
 
-  String company(User u) =>
-      u.ruc.trim().isNotEmpty ? u.ruc.trim() : u.company.trim();
+  String company(User u) => CompanyAccess.company(u);
 
-  bool canPlan(User u) => u.role == 'Administrator';
+  bool canPlan(User u) => CompanyAccess.canPlan(u);
 
   bool canOperate(User u, Trip t) =>
-      canPlan(u) || (u.role == 'Driver' && t.driver == u.email);
+      t.company == company(u) &&
+      (CompanyAccess.canManage(u) ||
+          (CompanyAccess.role(u) == CompanyRole.driver &&
+              _sameEmail(t.driver, u.email)));
+
+  bool _sameEmail(String a, String b) =>
+      CompanyAccess.email(a) == CompanyAccess.email(b);
+
+  bool canView(User u, Trip t) =>
+      t.company == company(u) &&
+      (canPlan(u) ||
+          canOperate(u, t) ||
+          (CompanyAccess.role(u) == CompanyRole.helper &&
+              (t.assignedTeam?.helpers.any((h) => _sameEmail(h, u.email)) ??
+                  false)));
 
   void check(User u, Trip t, {bool planning = false}) {
     if (company(u).isEmpty ||
@@ -27,14 +42,18 @@ class TripRepository {
 
   Future<List<Trip>> list(User u) async {
     final key = company(u);
-    if (key.isEmpty) throw StateError('A company is required.');
+    if (!CompanyAccess.canRead(u)) {
+      throw StateError('No tienes acceso a esta empresa.');
+    }
     final trips = _companies.putIfAbsent(key, () {
       final t = Trip('RT-${_sequence++}', key)
         ..name = 'Ate – Callao – Ventanilla'
         ..origin = 'Ate warehouse, Lima'
         ..departure = DateTime.now().add(const Duration(days: 1))
         ..plate = 'ABC-123'
-        ..driver = u.role == 'Driver' ? u.email : 'driver@demo.pe'
+        ..driver = CompanyAccess.role(u) == CompanyRole.driver
+            ? u.email
+            : 'driver@demo.pe'
         ..stops = [
           Stop('Callao', 'Av. Argentina, Callao', 'Dispatch · 999111222', [
             Cargo('Boxes', 25),
@@ -48,22 +67,23 @@ class TripRepository {
         ];
       return [t];
     });
-    return trips
-        .where((t) => canPlan(u) || (u.role == 'Driver' && t.driver == u.email))
-        .toList();
+    return trips.where((t) => canView(u, t)).toList();
   }
 
   List<Trip> assignments(User u, {String? plate, String? driver}) {
-    if (company(u).isEmpty) throw StateError('A company is required.');
+    if (!CompanyAccess.canRead(u)) {
+      throw StateError('No tienes acceso a esta empresa.');
+    }
     return (_companies[company(u)] ?? [])
         .where(
           (t) =>
+              (CompanyAccess.role(u) != CompanyRole.helper || canView(u, t)) &&
               t.status != TripStatus.draft &&
               t.status != TripStatus.completed &&
               (plate == null ||
                   FleetRepository.normalizePlate(t.plate) ==
                       FleetRepository.normalizePlate(plate)) &&
-              (driver == null || t.driver == driver),
+              (driver == null || _sameEmail(t.driver, driver)),
         )
         .toList()
       ..sort(
@@ -82,8 +102,9 @@ class TripRepository {
 
   void save(User u, Trip t) {
     check(u, t, planning: true);
-    if (t.status != TripStatus.draft)
+    if (t.status != TripStatus.draft) {
       throw StateError('Only drafts can be edited.');
+    }
     final list = _companies.putIfAbsent(t.company, () => []);
     final i = list.indexWhere((e) => e.id == t.id);
     if (i < 0) {
@@ -108,6 +129,62 @@ class TripRepository {
     }
   }
 
+  bool canAssignCrew(User u, Crew crew) {
+    final members = CompanyMembersRepository.instance;
+    return crew.company == company(u) &&
+        crew.active &&
+        members.validStaff(u, crew.driver, CompanyRole.driver) &&
+        crew.helpers.every((h) => members.validStaff(u, h, CompanyRole.helper));
+  }
+
+  String? _staffConflict(Trip other, Trip candidate, String driver) {
+    final reserved = [
+      other.driver,
+      ...?other.assignedTeam?.helpers,
+    ].map(CompanyAccess.email).where((email) => email.isNotEmpty).toSet();
+    return [driver, ...?candidate.assignedTeam?.helpers]
+        .where((email) => reserved.contains(CompanyAccess.email(email)))
+        .firstOrNull;
+  }
+
+  void _checkStaff(User u, Trip t, String driver) {
+    final crew = t.assignedTeam;
+    if (!CompanyMembersRepository.instance.validStaff(
+          u,
+          driver,
+          CompanyRole.driver,
+        ) ||
+        (crew != null && !canAssignCrew(u, crew))) {
+      throw StateError(
+        'Selecciona un conductor y ayudantes activos con el rol correspondiente.',
+      );
+    }
+    if (crew != null) {
+      final current = FleetRepository.instance
+          .crews(u)
+          .where((c) => c.id == crew.id)
+          .firstOrNull;
+      if (current != null &&
+          (!canAssignCrew(u, current) ||
+              !_sameEmail(current.driver, crew.driver) ||
+              current.helpers.length != crew.helpers.length ||
+              !current.helpers.toSet().containsAll(crew.helpers))) {
+        throw StateError(
+          'El equipo cambió. Vuelve a seleccionarlo en la pestaña Team.',
+        );
+      }
+    }
+  }
+
+  void returnToDraft(User u, Trip t) {
+    check(u, t, planning: true);
+    if (t.status != TripStatus.published || t.dispatched) {
+      throw StateError('Solo puedes volver a borrador antes del despacho.');
+    }
+    t.status = TripStatus.draft;
+    t.loaded = false;
+  }
+
   void publishFromPlanning(User u, Trip t) {
     check(u, t, planning: true);
     _checkCatalogAssignments(u, t);
@@ -121,14 +198,21 @@ class TripRepository {
 
     final selectedDriver = t.assignedTeam?.driver ?? t.driver;
     final selectedPlate = t.plate.isEmpty ? 'ABC-123' : t.plate;
+    _checkStaff(u, t, selectedDriver);
 
     for (final other in assignments(u)) {
       if (other.id == t.id) continue;
       final sameVehicle =
           FleetRepository.normalizePlate(other.plate) ==
           FleetRepository.normalizePlate(selectedPlate);
-      if (sameVehicle || other.driver == selectedDriver) {
-        throw StateError('Team unavailable for selected timeframe');
+      final conflict = _staffConflict(other, t, selectedDriver);
+      if (sameVehicle || conflict != null) {
+        final resource = sameVehicle
+            ? 'Vehículo $selectedPlate'
+            : 'Miembro $conflict';
+        throw StateError(
+          '$resource tiene conflicto con ${other.id} · ${other.name}.',
+        );
       }
     }
 
@@ -171,15 +255,19 @@ class TripRepository {
         'Provide name, origin, departure, delivery cargo, enabled vehicle and driver.',
       );
     }
+    _checkStaff(u, t, t.driver);
     for (final other in assignments(u)) {
       if (other.id == t.id) continue;
       final sameVehicle =
           FleetRepository.normalizePlate(other.plate) ==
           FleetRepository.normalizePlate(t.plate);
-      if (sameVehicle || other.driver == t.driver) {
+      final conflict = _staffConflict(other, t, t.driver);
+      if (sameVehicle || conflict != null) {
         final resource = sameVehicle
             ? 'Vehículo ${t.plate}'
-            : 'Conductor ${t.driver}';
+            : _sameEmail(conflict!, t.driver)
+            ? 'Conductor ${t.driver}'
+            : 'Miembro $conflict';
         throw StateError(
           '$resource tiene conflicto con ${other.id} · ${other.name}. '
           'Cierre ese viaje primero: no hay hora de llegada para calcular intervalos.',
@@ -198,15 +286,17 @@ class TripRepository {
 
   void dispatch(User u, Trip t) {
     check(u, t, planning: true);
-    if (!t.loaded || t.status != TripStatus.published)
+    if (!t.loaded || t.status != TripStatus.published) {
       throw StateError('Confirm loading first.');
+    }
     t.dispatched = true;
   }
 
   void start(User u, Trip t) {
     check(u, t);
-    if (!t.dispatched || t.status != TripStatus.published)
+    if (!t.dispatched || t.status != TripStatus.published) {
       throw StateError('Confirm dispatch first.');
+    }
     t.status = TripStatus.inProgress;
   }
 
@@ -219,14 +309,17 @@ class TripRepository {
     String reason,
   ) {
     check(u, t);
-    if (t.status != TripStatus.inProgress)
+    if (t.status != TripStatus.inProgress) {
       throw StateError('Start the trip first.');
+    }
     final s = t.stops[index];
-    if (s.result != null || quantities.length != s.cargo.length)
+    if (s.result != null || quantities.length != s.cargo.length) {
       throw StateError('Delivery already recorded.');
+    }
     for (var i = 0; i < quantities.length; i++) {
-      if (quantities[i] < 0 || quantities[i] > s.cargo[i].planned)
+      if (quantities[i] < 0 || quantities[i] > s.cargo[i].planned) {
         throw StateError('Delivered quantity must be within planned quantity.');
+      }
     }
     final total = quantities.fold(0, (int a, b) => a + b);
     final planned = s.cargo.fold(0, (int a, c) => a + c.planned);
@@ -248,18 +341,20 @@ class TripRepository {
     check(u, t);
     if (t.status != TripStatus.inProgress ||
         t.stops.any((s) => s.result == null) ||
-        (t.pending > 0 && resolution.trim().isEmpty))
+        (t.pending > 0 && resolution.trim().isEmpty)) {
       throw StateError(
         'Record all results and document pending cargo disposition.',
       );
+    }
     t.pendingResolution = resolution.trim();
     t.status = TripStatus.completed;
   }
 
   void report(User u, Trip t, TripIncident incident) {
     check(u, t);
-    if (incident.type.isEmpty || incident.description.trim().isEmpty)
+    if (incident.type.isEmpty || incident.description.trim().isEmpty) {
       throw StateError('Type and description required.');
+    }
     t.incidents.add(incident);
   }
 }

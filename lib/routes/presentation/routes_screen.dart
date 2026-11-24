@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../iam/domain/user.dart';
 import '../../fleet/data/fleet_repository.dart';
-import '../../iam/data/user_repository.dart';
+import '../../iam/data/company_members_repository.dart';
+import '../../iam/domain/company_access.dart';
 import '../domain/trip.dart';
 import '../data/trip_repository.dart';
 import '../data/client_location_repository.dart';
@@ -39,7 +40,14 @@ class _RoutesScreenState extends State<RoutesScreen> {
   void reload() {
     data = widget.user == null
         ? Future.error('Sign in to view routes.')
-        : repo.list(widget.user!);
+        : _loadTrips(widget.user!);
+  }
+
+  Future<List<Trip>> _loadTrips(User user) async {
+    if (repo.canPlan(user)) {
+      await CompanyMembersRepository.instance.refresh(user);
+    }
+    return repo.list(user);
   }
 
   Future<void> _createNewRoute() async {
@@ -268,21 +276,28 @@ class _TripEditorState extends State<TripEditor> {
   void initState() {
     super.initState();
     draft = widget.trip.copy();
-    UserRepository()
-        .driversForCompany(widget.user)
-        .then((users) {
-          if (mounted) {
-            setState(() => drivers = users.map((u) => u.email).toList());
-          }
-        })
-        .catchError((Object e) {
-          if (mounted) {
-            setState(
-              () => driverNotice =
-                  'Local users unavailable; demo driver available.',
-            );
-          }
+    loadDrivers();
+  }
+
+  Future<void> loadDrivers() async {
+    final members = CompanyMembersRepository.instance;
+    try {
+      await members.refresh(widget.user);
+      if (mounted) {
+        setState(() {
+          drivers = members
+              .eligible(widget.user, CompanyRole.driver)
+              .map((m) => m.email)
+              .toList();
         });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => driverNotice = 'No se pudo cargar el personal de la empresa.',
+        );
+      }
+    }
   }
 
   Widget field(
@@ -387,17 +402,31 @@ class _TripEditorState extends State<TripEditor> {
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
-          initialValue: draft.driver.isEmpty ? null : draft.driver,
-          decoration: const InputDecoration(
-            labelText: 'Driver · company users / demo',
-          ),
+          initialValue: drivers.contains(draft.driver) ? draft.driver : null,
+          key: ValueKey(drivers.length),
+          decoration: const InputDecoration(labelText: 'Conductor activo'),
           isExpanded: true,
-          items: {
-            'driver@demo.pe',
-            ...drivers,
-            if (draft.driver.isNotEmpty) draft.driver,
-          }.map((d) => DropdownMenuItem(value: d, child: Text(d))).toList(),
-          onChanged: (v) => draft.driver = v ?? '',
+          items: {...drivers}
+              .map(
+                (d) => DropdownMenuItem(
+                  value: d,
+                  child: Text(
+                    CompanyMembersRepository.instance.staffLabel(
+                      widget.user,
+                      d,
+                      CompanyRole.driver,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: drivers.isEmpty
+              ? null
+              : (v) {
+                  draft.driver = v ?? '';
+                  draft.assignedTeam = null;
+                },
         ),
         const SizedBox(height: 16),
         if (driverNotice != null) Text(driverNotice!),
@@ -548,6 +577,12 @@ class _TripDetailState extends State<TripDetail> {
 
   @override
   Widget build(BuildContext context) {
+    if (!repo.canView(widget.user, t)) {
+      return Scaffold(
+        appBar: AppBar(title: Text(t.id)),
+        body: const Center(child: Text('No tienes acceso a este viaje.')),
+      );
+    }
     final plan = repo.canPlan(widget.user),
         operate = repo.canOperate(widget.user, t);
 
@@ -573,8 +608,18 @@ class _TripDetailState extends State<TripDetail> {
               children: [
                 Text(t.name, style: Theme.of(context).textTheme.headlineSmall),
                 Text(
-                  'Departure: ${departureLabel(t.departure)}\nVehicle: ${t.plate}\nDriver: ${t.driver}',
+                  'Departure: ${departureLabel(t.departure)}\nVehicle: ${t.plate}\nConductor: ${CompanyMembersRepository.instance.staffLabel(widget.user, t.driver, CompanyRole.driver, history: true)}',
                 ),
+                if (t.assignedTeam case final team?)
+                  ListTile(
+                    title: Text(team.name),
+                    subtitle: Text(
+                      [
+                        for (final helper in team.helpers)
+                          'Ayudante: ${CompanyMembersRepository.instance.staffLabel(widget.user, helper, CompanyRole.helper, history: true)}',
+                      ].join('\n'),
+                    ),
+                  ),
                 ListTile(
                   leading: const Icon(Icons.warehouse_outlined),
                   title: Text(t.origin),
@@ -615,6 +660,8 @@ class _TripDetailState extends State<TripDetail> {
                       ].join('\n'),
                     ),
                   ),
+                if (plan && t.status == TripStatus.published && !t.dispatched)
+                  button('Volver a borrador', _confirmReturnToDraft),
                 if (plan && t.status == TripStatus.draft)
                   button('Resume draft', () async {
                     await Navigator.push(
@@ -731,6 +778,31 @@ class _TripDetailState extends State<TripDetail> {
         ),
       ),
     );
+  }
+
+  Future<void> _confirmReturnToDraft() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Volver a borrador'),
+        content: const Text(
+          'La ruta dejará de estar publicada y liberará la asignación. Deberás confirmar la carga al volver a publicarla.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
+    if (mounted && confirmed == true) {
+      act(() => repo.returnToDraft(widget.user, t));
+    }
   }
 
   Future<void> delivery(int index) async {

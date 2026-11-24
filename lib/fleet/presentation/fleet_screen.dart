@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../iam/domain/user.dart';
-import '../../iam/data/user_repository.dart';
+import '../../iam/data/company_members_repository.dart';
+import '../../iam/domain/company_access.dart';
 import '../../routes/data/trip_repository.dart';
 import '../../routes/domain/trip.dart';
 import '../data/fleet_repository.dart';
@@ -17,8 +18,11 @@ class _FleetScreenState extends State<FleetScreen> {
   final repo = FleetRepository.instance;
   final trips = TripRepository.instance;
   late Future<void> data;
-  List<String> drivers = ['driver@demo.pe'];
-  final helpers = <String>['helper@demo.pe'];
+  final members = CompanyMembersRepository.instance;
+  List<String> drivers = [], helpers = [];
+
+  String staff(String email, CompanyRole role) =>
+      members.staffLabel(user, email, role);
   String query = '', state = '', type = '';
   bool teams = false;
   User get user => widget.user!;
@@ -38,15 +42,16 @@ class _FleetScreenState extends State<FleetScreen> {
     }
     repo.vehicles(user);
     await trips.list(user);
-    if (repo.canEdit(user)) {
-      try {
-        final users = await UserRepository().driversForCompany(user);
-        drivers = users.isEmpty
-            ? ['driver@demo.pe']
-            : users.map((u) => u.email).toList();
-      } catch (_) {
-        drivers = ['driver@demo.pe'];
-      }
+    if (CompanyAccess.canPlan(user)) {
+      await members.refresh(user);
+      drivers = members
+          .eligible(user, CompanyRole.driver)
+          .map((m) => m.email)
+          .toList();
+      helpers = members
+          .eligible(user, CompanyRole.helper)
+          .map((m) => m.email)
+          .toList();
     }
   }
 
@@ -67,8 +72,8 @@ class _FleetScreenState extends State<FleetScreen> {
             v != null
                 ? '${v.type} · ${v.brand} ${v.model}\n${v.capacity} kg\n${vehicleStatusLabel(v.status)}\n${assignments(plate: v.plate)}\n'
                       '${trips.assignments(user, plate: v.plate).map((t) => '${t.id} · ${t.name} · ${t.departure}').join('\n')}'
-                : 'Conductor: ${c!.driver}\nAyudantes: ${c.helpers.join(', ')}\n${c.active ? 'Activo' : 'Inactivo'}\n${assignments(driver: c.driver)}\n'
-                      'Routes registra solo el conductor. La composición del equipo no modifica viajes anteriores.',
+                : 'Conductor: ${staff(c!.driver, CompanyRole.driver)}\nAyudantes: ${c.helpers.map((h) => staff(h, CompanyRole.helper)).join(', ')}\n${c.active ? 'Activo' : 'Inactivo'}\n${assignments(driver: c.driver)}\n'
+                      'Los viajes conservan la tripulación seleccionada al planificar.',
           ),
         ),
         actions: [
@@ -175,17 +180,26 @@ class _FleetScreenState extends State<FleetScreen> {
                         ),
                         items: drivers
                             .map(
-                              (d) => DropdownMenuItem(value: d, child: Text(d)),
+                              (d) => DropdownMenuItem(
+                                value: d,
+                                child: Text(
+                                  staff(d, CompanyRole.driver),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
                             )
                             .toList(),
                         onChanged: (v) => driver = v!,
                       ),
-                      const Text(
-                        'Ayudantes simulados · no existe este rol en usuarios',
-                      ),
-                      for (final h in helpers)
+                      const Text('Ayudantes activos de la empresa'),
+                      for (final h in {...helpers, ...selected})
                         CheckboxListTile(
-                          title: Text(h),
+                          title: Text(staff(h, CompanyRole.helper)),
+                          subtitle: helpers.contains(h)
+                              ? null
+                              : const Text(
+                                  'Ya no disponible para nuevas asignaciones',
+                                ),
                           value: selected.contains(h),
                           onChanged: (v) => update(() {
                             v! ? selected.add(h) : selected.remove(h);
@@ -197,7 +211,7 @@ class _FleetScreenState extends State<FleetScreen> {
                         onChanged: (v) => update(() => active = v),
                       ),
                       const Text(
-                        'La edición solo cambia el catálogo. Routes conserva su conductor registrado.',
+                        'Los viajes publicados conservan su tripulación registrada.',
                       ),
                     ],
                   ],
@@ -303,11 +317,14 @@ class _FleetScreenState extends State<FleetScreen> {
               if (teams) {
                 for (final c in repo.crews(user)) {
                   final s = c.active ? 'Activo' : 'Inactivo';
-                  if ('${c.name} ${c.driver}'.toLowerCase().contains(query) &&
+                  if ('${c.name} ${staff(c.driver, CompanyRole.driver)}'
+                          .toLowerCase()
+                          .contains(query) &&
                       (state.isEmpty || state == s)) {
                     rows.add((
                       title: c.name,
-                      info: '${c.driver}\n${c.helpers.join(', ')}',
+                      info:
+                          '${staff(c.driver, CompanyRole.driver)}\n${c.helpers.map((h) => staff(h, CompanyRole.helper)).join(', ')}',
                       status: s,
                       next: assignments(driver: c.driver),
                       open: () => detail(null, c),

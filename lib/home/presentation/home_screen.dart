@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../clients/presentation/clients_screen.dart';
 import '../../iam/domain/user.dart';
+import '../../iam/domain/company_access.dart';
+import '../../iam/data/company_members_repository.dart';
+import '../../iam/presentation/user_management_screen.dart';
 import '../../fleet/presentation/fleet_screen.dart';
 import '../../routes/app_routes.dart';
 import '../../routes/presentation/routes_screen.dart';
@@ -47,23 +50,47 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = ModalRoute.of(context)?.settings.arguments as User?;
     final option = menuOptions[_selected];
 
-    return Scaffold(
-      appBar: RutanaAppBar(
-        title: option.title,
-        onProfileTap: () =>
-            ScaffoldMessenger.of(context)
-                .showSnackBar(const SnackBar(content: Text('Coming soon'))),
-      ),
-      drawer: _buildDrawer(user),
-      body: _selected == 0
-          ? _buildDashboard(user)
-          : _selected == 1
-          ? RoutesScreen(user: user)
-          : _selected == 2
-          ? FleetScreen(user: user)
-          : _selected == 3
-          ? ClientsScreen(user: user)
-          : _buildComingSoon(option),
+    return ListenableBuilder(
+      listenable: CompanyMembersRepository.instance.revision,
+      builder: (context, _) {
+        if (user != null && CompanyAccess.accessRemoved(user)) {
+          return Scaffold(
+            appBar: const RutanaAppBar(title: 'Qoritech'),
+            body: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Tu acceso a esta empresa está desactivado.'),
+                  TextButton(
+                    onPressed: _signOut,
+                    child: const Text('Cerrar sesión'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        return Scaffold(
+          appBar: RutanaAppBar(
+            title: option.title,
+            onProfileTap: () =>
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(const SnackBar(content: Text('Coming soon'))),
+          ),
+          drawer: _buildDrawer(user),
+          body: _selected == 0
+              ? _buildDashboard(user)
+              : _selected == 1
+              ? RoutesScreen(user: user)
+              : _selected == 2
+              ? FleetScreen(user: user)
+              : _selected == 3
+              ? ClientsScreen(user: user)
+              : _selected == 4
+              ? UserManagementScreen(user: user)
+              : _buildComingSoon(option),
+        );
+      },
     );
   }
 
@@ -146,7 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          user.role,
+                          CompanyAccess.role(user)?.label ?? 'Sin acceso',
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 12,
