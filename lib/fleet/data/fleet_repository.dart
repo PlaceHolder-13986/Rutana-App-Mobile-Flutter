@@ -1,3 +1,5 @@
+import '../../iam/data/company_members_repository.dart';
+import '../../iam/domain/company_access.dart';
 import '../../iam/domain/user.dart';
 import '../../routes/data/trip_repository.dart';
 
@@ -41,14 +43,13 @@ class FleetRepository {
   final Map<String, List<Vehicle>> _vehicles = {};
   final Map<String, List<Crew>> _crews = {};
   int _sequence = 0;
-  static String company(User u) =>
-      u.ruc.trim().isNotEmpty ? u.ruc.trim() : u.company.trim();
+  static String company(User u) => CompanyAccess.company(u);
   static String normalizePlate(String value) =>
       value.toUpperCase().replaceAll(RegExp('[^A-Z0-9]'), '');
-  bool canEdit(User u) => u.role == 'Administrator';
+  bool canEdit(User u) => CompanyAccess.canManage(u);
   void check(User u, {bool edit = false}) {
-    if (company(u).isEmpty ||
-        !(u.role == 'Administrator' || u.role == 'Driver') ||
+    if (!CompanyAccess.canRead(u) ||
+        CompanyAccess.role(u) == CompanyRole.helper ||
         (edit && !canEdit(u))) {
       throw StateError('No tiene permisos para esta operación.');
     }
@@ -142,7 +143,10 @@ class FleetRepository {
     required Set<String> helperOptions,
   }) {
     check(u, edit: true);
+    final members = CompanyMembersRepository.instance;
     if (name.trim().isEmpty ||
+        !members.validStaff(u, driver, CompanyRole.driver) ||
+        helpers.any((h) => !members.validStaff(u, h, CompanyRole.helper)) ||
         !drivers.contains(driver) ||
         helpers.any((h) => !helperOptions.contains(h)) ||
         {driver, ...helpers}.length != helpers.length + 1) {

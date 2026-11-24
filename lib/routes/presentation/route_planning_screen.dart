@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../clients/presentation/clients_screen.dart';
 import '../../fleet/data/fleet_repository.dart';
+import '../../iam/data/company_members_repository.dart';
+import '../../iam/domain/company_access.dart';
 import '../../iam/domain/user.dart';
 import '../../shared/theme/app_colors.dart';
 import '../data/client_location_repository.dart';
@@ -29,6 +31,8 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
   late Trip _trip;
   final _locationRepo = ClientLocationRepository.instance;
   final _fleetRepo = FleetRepository.instance;
+  final _members = CompanyMembersRepository.instance;
+  late Future<void> _staffLoad;
 
   final _nameController = TextEditingController();
   final _originController = TextEditingController();
@@ -41,6 +45,7 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _trip = widget.trip.copy();
+    _staffLoad = _members.refresh(widget.user);
 
     _nameController.text = _trip.name.isEmpty
         ? 'Ruta de Distribución'
@@ -783,9 +788,48 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
   // ---------------------------------------------------------------------------
   // TAB 2: TEAM
   // ---------------------------------------------------------------------------
-  Widget _buildTeamTab() {
-    final crews = _fleetRepo.crews(widget.user);
-    final vehicles = _fleetRepo.vehicles(widget.user);
+  Widget _buildTeamTab() => FutureBuilder<void>(
+    future: _staffLoad,
+    builder: (context, snapshot) {
+      if (snapshot.connectionState != ConnectionState.done) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (snapshot.hasError) {
+        return Center(
+          child: TextButton(
+            onPressed: () {
+              final future = _members.refresh(widget.user);
+              setState(() {
+                _staffLoad = future;
+              });
+            },
+            child: const Text('No se pudo cargar el personal. Reintentar'),
+          ),
+        );
+      }
+      return _buildTeamOptions();
+    },
+  );
+
+  Widget _buildTeamOptions() {
+    final user = widget.user;
+    final crews = _fleetRepo
+        .crews(user)
+        .where((c) => TripRepository.instance.canAssignCrew(user, c))
+        .toList();
+    final vehicles = _fleetRepo
+        .vehicles(user)
+        .where((v) => v.status == VehicleStatus.enabled)
+        .toList();
+    final vehiclePlate = vehicles.isEmpty ? null : vehicles.first.plate;
+    final drivers = _members.eligible(user, CompanyRole.driver);
+    final selectedDriver =
+        _trip.assignedTeam == null &&
+            drivers.any((m) => m.email == _trip.driver)
+        ? _trip.driver
+        : null;
+    String staff(String email, CompanyRole role) =>
+        _members.staffLabel(user, email, role);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -802,6 +846,34 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
           ),
           const SizedBox(height: 12),
 
+          if (vehiclePlate == null)
+            const Text('No hay vehículos habilitados para asignar.'),
+          DropdownButtonFormField<String>(
+            key: ValueKey(selectedDriver),
+            initialValue: selectedDriver,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Conductor sin equipo',
+            ),
+            items: [
+              for (final driver in drivers)
+                DropdownMenuItem(
+                  value: driver.email,
+                  child: Text(
+                    staff(driver.email, CompanyRole.driver),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+            onChanged: vehiclePlate == null || drivers.isEmpty
+                ? null
+                : (value) => setState(() {
+                    _trip.assignedTeam = null;
+                    _trip.driver = value!;
+                    _trip.plate = vehiclePlate;
+                  }),
+          ),
+          const SizedBox(height: 12),
           if (crews.isEmpty)
             Container(
               padding: const EdgeInsets.all(24),
@@ -821,9 +893,6 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
             Column(
               children: crews.map((crew) {
                 final isSelected = _trip.assignedTeam?.id == crew.id;
-                final vehiclePlate = vehicles.isNotEmpty
-                    ? vehicles.first.plate
-                    : 'XYZ-123';
 
                 return Container(
                   margin: const EdgeInsets.only(bottom: 12),
@@ -851,7 +920,7 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                               ),
                               const SizedBox(width: 8),
                               Text(
-                                vehiclePlate,
+                                vehiclePlate ?? 'Sin vehículo',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 16,
@@ -863,13 +932,15 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                           SizedBox(
                             height: 36,
                             child: ElevatedButton(
-                              onPressed: () {
-                                setState(() {
-                                  _trip.assignedTeam = crew;
-                                  _trip.driver = crew.driver;
-                                  _trip.plate = vehiclePlate;
-                                });
-                              },
+                              onPressed: vehiclePlate == null
+                                  ? null
+                                  : () {
+                                      setState(() {
+                                        _trip.assignedTeam = crew;
+                                        _trip.driver = crew.driver;
+                                        _trip.plate = vehiclePlate;
+                                      });
+                                    },
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: isSelected
                                     ? AppColors.navyDark
@@ -885,6 +956,10 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                         ],
                       ),
                       const SizedBox(height: 8),
+                      Text(
+                        crew.name,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                       const Text(
                         'Team members',
                         style: TextStyle(
@@ -895,7 +970,7 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        crew.driver,
+                        staff(crew.driver, CompanyRole.driver),
                         style: const TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 13,
@@ -903,7 +978,7 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                       ),
                       for (final helper in crew.helpers)
                         Text(
-                          helper,
+                          staff(helper, CompanyRole.helper),
                           style: const TextStyle(
                             fontSize: 13,
                             color: Colors.black87,
