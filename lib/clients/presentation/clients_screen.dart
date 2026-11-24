@@ -47,7 +47,12 @@ class _ClientsScreenState extends State<ClientsScreen> {
     super.dispose();
   }
 
-  void _reload() => setState(() => _data = _repository.load(widget.user));
+  void _reload() {
+    final data = _repository.load(widget.user);
+    setState(() {
+      _data = data;
+    });
+  }
 
   Future<void> _open({Client? client}) async {
     final user = widget.user!;
@@ -204,9 +209,10 @@ class _ClientDetailState extends State<_ClientDetail> {
     try {
       await _repository.setActive(widget.user, c.id, !c.active);
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(_errorMessage(error))));
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -397,10 +403,12 @@ class _ClientForm extends StatelessWidget {
           formatters: [FilteringTextInputFormatter.digitsOnly],
           helper: 'Validación local de formato: 11 dígitos.',
           validator: (value) {
-            if (!ClientLocationRepository.rucPattern.hasMatch(value.trim()))
+            if (!ClientLocationRepository.rucPattern.hasMatch(value.trim())) {
               return 'Ingresa 11 dígitos.';
-            if (_repository.hasRuc(user, value, exceptId: c?.id))
+            }
+            if (_repository.hasRuc(user, value, exceptId: c?.id)) {
               return 'Este RUC ya está registrado en tu empresa.';
+            }
             return null;
           },
         ),
@@ -580,8 +588,9 @@ class _CatalogFormState<T> extends State<_CatalogForm<T>> {
                         _ => null,
                       };
                       if (text.trim().isEmpty &&
-                          (other?.trim().isNotEmpty ?? false))
+                          (other?.trim().isNotEmpty ?? false)) {
                         return 'Ingresa ambas coordenadas.';
+                      }
                       return field.validator?.call(text);
                     },
                   ),

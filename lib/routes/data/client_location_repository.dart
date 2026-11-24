@@ -1,5 +1,6 @@
 import '../../clients/domain/client.dart';
 import '../../iam/domain/user.dart';
+import '../../iam/domain/company_access.dart';
 import '../domain/client_location.dart';
 
 class ClientLocationRepository {
@@ -7,16 +8,15 @@ class ClientLocationRepository {
   final _companies = <String, _CompanyCatalog>{};
   int _sequence = 0;
 
-  static String company(User user) =>
-      user.ruc.trim().isNotEmpty ? user.ruc.trim() : user.company.trim();
+  static String company(User user) => CompanyAccess.company(user);
 
-  bool canEdit(User? user) =>
-      user != null && user.role == 'Administrator' && company(user).isNotEmpty;
+  bool canEdit(User? user) => CompanyAccess.canManage(user);
 
   _CompanyCatalog _catalog(User? user, {bool write = false}) {
     if (user == null ||
         company(user).isEmpty ||
-        !{'Administrator', 'Driver'}.contains(user.role) ||
+        (!CompanyAccess.canRead(user) ||
+            CompanyAccess.role(user) == CompanyRole.helper) ||
         (write && !canEdit(user))) {
       throw StateError('No tienes permiso para acceder al catálogo.');
     }
@@ -72,6 +72,13 @@ class ClientLocationRepository {
       active: previous?.active ?? true,
     );
     catalog.clients[saved.id] = saved;
+    if (previous != null && previous.legalName != saved.legalName) {
+      catalog.sites.updateAll(
+        (_, site) => site.clientId == saved.id
+            ? site.withClientName(saved.legalName)
+            : site,
+      );
+    }
     return saved;
   }
 
@@ -140,11 +147,15 @@ class ClientLocationRepository {
   }
 
   String? inactiveReason(User user, ClientLocation snapshot) {
-    if (snapshot.clientId == null) return null;
+    if (snapshot.clientId == null ||
+        CompanyAccess.role(user) == CompanyRole.helper) {
+      return null;
+    }
     final catalog = _catalog(user);
     final owner = catalog.clients[snapshot.clientId];
-    if (owner == null || !owner.active)
+    if (owner == null || !owner.active) {
       return 'Cliente inactivo o no disponible';
+    }
     final site = catalog.sites[snapshot.id];
     if (site == null || site.clientId != owner.id || !site.isActive) {
       return 'Sede inactiva o no disponible';

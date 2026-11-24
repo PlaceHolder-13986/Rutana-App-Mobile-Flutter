@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../domain/company_access.dart';
+
 import '../../routes/app_routes.dart';
 import '../../shared/theme/app_colors.dart';
 import '../../shared/widgets/rutana_header.dart';
@@ -73,6 +75,10 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       } else {
         setState(() => _error = 'Incorrect email or password');
+      }
+    } on CompanyAccessRevoked {
+      if (mounted) {
+        setState(() => _error = 'Tu acceso a esta empresa está desactivado.');
       }
     } on TimeoutException {
       if (mounted) {
