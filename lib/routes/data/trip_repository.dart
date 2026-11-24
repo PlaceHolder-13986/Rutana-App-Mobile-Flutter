@@ -1,6 +1,7 @@
 import '../../iam/domain/user.dart';
 import '../../fleet/data/fleet_repository.dart';
 import '../domain/trip.dart';
+import 'client_location_repository.dart';
 
 /// Store de Rutana. Almacena rutas en memoria durante la ejecución de la app.
 class TripRepository {
@@ -92,10 +93,30 @@ class TripRepository {
     }
   }
 
+  void _checkCatalogAssignments(User u, Trip t) {
+    final snapshots = [
+      ?t.originLocation,
+      for (final stop in t.stops) ?stop.location,
+      if (t.stops.isEmpty) ...t.selectedLocations,
+    ];
+    for (final location in snapshots) {
+      final reason = ClientLocationRepository.instance.inactiveReason(
+        u,
+        location,
+      );
+      if (reason != null) throw StateError('$reason: ${location.siteName}.');
+    }
+  }
+
   void publishFromPlanning(User u, Trip t) {
     check(u, t, planning: true);
-    if (t.selectedLocations.isEmpty || (t.assignedTeam == null && t.driver.isEmpty)) {
-      throw StateError('Route incomplete: Add at least one location and an assigned team to publish');
+    _checkCatalogAssignments(u, t);
+    if ((t.stops.isEmpty && t.selectedLocations.isEmpty) ||
+        t.stops.any((s) => s.site.trim().isEmpty || s.address.trim().isEmpty) ||
+        (t.assignedTeam == null && t.driver.isEmpty)) {
+      throw StateError(
+        'Route incomplete: Add at least one location and an assigned team to publish',
+      );
     }
 
     final selectedDriver = t.assignedTeam?.driver ?? t.driver;
@@ -115,12 +136,7 @@ class TripRepository {
     t.plate = selectedPlate;
     if (t.stops.isEmpty) {
       t.stops = t.selectedLocations.map((loc) {
-        return Stop(
-          loc.siteName,
-          loc.address,
-          loc.clientName,
-          [Cargo('Entregas / Carga', 10)],
-        );
+        return Stop.fromLocation(loc, [Cargo('Entregas / Carga', 10)]);
       }).toList();
     }
     save(u, t);
@@ -129,6 +145,7 @@ class TripRepository {
 
   void publish(User u, Trip t) {
     check(u, t, planning: true);
+    _checkCatalogAssignments(u, t);
     if (t.status != TripStatus.draft ||
         t.name.trim().isEmpty ||
         t.origin.trim().isEmpty ||

@@ -105,6 +105,8 @@ void main() {
     expect(find.text('New route'), findsOneWidget);
     await tester.tap(find.text('New route'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Confirm'));
+    await tester.pumpAndSettle();
     expect(find.text('Save draft'), findsOneWidget);
     await tester.ensureVisible(find.text('Save draft'));
     await tester.tap(find.text('Save draft'));
