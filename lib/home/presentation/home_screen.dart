@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../clients/presentation/clients_screen.dart';
 import '../../iam/domain/user.dart';
 import '../../fleet/presentation/fleet_screen.dart';
 import '../../routes/app_routes.dart';
@@ -60,6 +61,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ? RoutesScreen(user: user)
           : _selected == 2
           ? FleetScreen(user: user)
+          : _selected == 3
+          ? ClientsScreen(user: user)
           : _buildComingSoon(option),
     );
   }

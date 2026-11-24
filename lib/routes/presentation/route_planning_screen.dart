@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../clients/presentation/clients_screen.dart';
 import '../../fleet/data/fleet_repository.dart';
 import '../../iam/domain/user.dart';
 import '../../shared/theme/app_colors.dart';
@@ -32,8 +33,7 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
   final _nameController = TextEditingController();
   final _originController = TextEditingController();
 
-  String _searchQuery = '';
-  late ClientLocation _focusedLocation;
+  String? _clientId, _siteId;
   bool _isSaving = false;
 
   @override
@@ -42,21 +42,22 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
     _tabController = TabController(length: 2, vsync: this);
     _trip = widget.trip.copy();
 
-    _nameController.text = _trip.name.isEmpty ? 'Ruta de Distribución' : _trip.name;
-    _originController.text = _trip.origin.isEmpty ? 'Almacén Principal' : _trip.origin;
+    _nameController.text = _trip.name.isEmpty
+        ? 'Ruta de Distribución'
+        : _trip.name;
+    _originController.text = _trip.origin.isEmpty
+        ? 'Almacén Principal'
+        : _trip.origin;
     _trip.departure ??= DateTime.now().add(const Duration(hours: 4));
 
-    final locations = _locationRepo.list();
-    _focusedLocation = locations.isNotEmpty
-        ? locations.first
-        : const ClientLocation(
-            id: 'P-001',
-            clientName: 'ACME Corp',
-            siteName: 'Main Warehouse',
-            address: 'Av. Industrial 123, Lima',
-            latitude: -12.0464,
-            longitude: -77.0428,
-          );
+    if (_trip.stops.isEmpty) {
+      _trip.stops = _trip.selectedLocations
+          .map(
+            (site) => Stop.fromLocation(site, [Cargo('Entregas / Carga', 10)]),
+          )
+          .toList();
+    }
+    _trip.selectedLocations.clear();
   }
 
   @override
@@ -116,7 +117,10 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
       );
       Navigator.pop(context, true);
     } catch (e) {
-      _showAlert('Aviso de publicación', e.toString().replaceAll('StateError: ', ''));
+      _showAlert(
+        'Aviso de publicación',
+        e.toString().replaceAll('StateError: ', ''),
+      );
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -144,29 +148,130 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
     );
   }
 
-  bool _isLocationSelected(ClientLocation loc) {
-    return _trip.stops.any((s) => s.site == loc.siteName || s.address == loc.address) ||
-        _trip.selectedLocations.any((l) => l.id == loc.id);
+  Future<void> _openClients() async {
+    await ClientsScreen.open(context, widget.user);
+    if (mounted) setState(() {});
   }
 
-  void _toggleSelectLocation(ClientLocation loc) {
-    setState(() {
-      if (_isLocationSelected(loc)) {
-        _trip.selectedLocations.removeWhere((l) => l.id == loc.id);
-        _trip.stops.removeWhere((s) => s.site == loc.siteName || s.address == loc.address);
-      } else {
-        _trip.selectedLocations.add(loc);
-        _trip.stops.add(
-          Stop(
-            loc.siteName,
-            loc.address,
-            'Contacto · ${loc.clientName}',
-            [Cargo('Carga / Producto', 1)],
-          ),
-        );
-      }
-    });
+  Widget _buildCatalogSelector() {
+    final clients = _locationRepo
+        .clients(widget.user)
+        .where((c) => c.active)
+        .toList();
+    final clientId = clients.any((c) => c.id == _clientId) ? _clientId : null;
+    final sites = clientId == null
+        ? <ClientLocation>[]
+        : _locationRepo
+              .sites(widget.user, clientId)
+              .where((s) => s.isActive)
+              .toList();
+    final siteId = sites.any((s) => s.id == _siteId) ? _siteId : null;
+    final site = siteId == null
+        ? null
+        : sites.firstWhere((s) => s.id == siteId);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Seleccionar ubicación',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              key: ValueKey(('client', clientId)),
+              initialValue: clientId,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Cliente activo'),
+              items: [
+                for (final c in clients)
+                  DropdownMenuItem(
+                    value: c.id,
+                    child: Text(c.legalName, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: clients.isEmpty
+                  ? null
+                  : (value) => setState(() {
+                      _clientId = value;
+                      _siteId = null;
+                    }),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              key: ValueKey(('site', clientId, siteId)),
+              initialValue: siteId,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Sede activa'),
+              items: [
+                for (final s in sites)
+                  DropdownMenuItem(
+                    value: s.id,
+                    child: Text(s.siteName, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: sites.isEmpty
+                  ? null
+                  : (value) => setState(() => _siteId = value),
+            ),
+            if (clients.isEmpty)
+              const Text(
+                'No hay clientes activos. Registra o activa un cliente con una sede activa.',
+              ),
+            if (clientId != null && sites.isEmpty)
+              const Text(
+                'Este cliente no tiene sedes activas. Registra o activa una sede.',
+              ),
+            if (site != null) ...[
+              const SizedBox(height: 8),
+              Text(site.address),
+              if (site.contactLabel.isNotEmpty) Text(site.contactLabel),
+              if (site.latitude != null)
+                Text('${site.latitude}, ${site.longitude}'),
+            ],
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton(
+                  onPressed: site == null
+                      ? null
+                      : () => setState(() {
+                          _trip.stops.add(
+                            Stop.fromLocation(site, [
+                              Cargo('Carga / Producto', 1),
+                            ]),
+                          );
+                        }),
+                  child: const Text('Añadir parada'),
+                ),
+                OutlinedButton(
+                  onPressed: site == null
+                      ? null
+                      : () => setState(() {
+                          _trip.originLocation = site;
+                          _originController.text = site.address;
+                        }),
+                  child: const Text('Usar como origen'),
+                ),
+                TextButton(
+                  onPressed: _openClients,
+                  child: const Text('Administrar clientes y sedes'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
+
+  String? _locationStatus(ClientLocation? location) => location == null
+      ? null
+      : _locationRepo.inactiveReason(widget.user, location);
 
   Future<void> _pickDepartureTime() async {
     final current = _trip.departure ?? DateTime.now();
@@ -270,7 +375,10 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                           onPressed: _isSaving ? null : _saveDraft,
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppColors.navyDark,
-                            side: const BorderSide(color: AppColors.navy, width: 1.5),
+                            side: const BorderSide(
+                              color: AppColors.navy,
+                              width: 1.5,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
                             ),
@@ -301,7 +409,9 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                               ? const SizedBox(
                                   width: 18,
                                   height: 18,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 )
                               : const Text(
                                   'Publish route',
@@ -323,10 +433,7 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
           Expanded(
             child: TabBarView(
               controller: _tabController,
-              children: [
-                _buildLocationsAndStopsTab(),
-                _buildTeamTab(),
-              ],
+              children: [_buildLocationsAndStopsTab(), _buildTeamTab()],
             ),
           ),
         ],
@@ -338,8 +445,6 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
   // TAB 1: LOCATIONS & STOPS
   // ---------------------------------------------------------------------------
   Widget _buildLocationsAndStopsTab() {
-    final allLocations = _locationRepo.list(query: _searchQuery);
-
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -373,6 +478,11 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                 const SizedBox(height: 12),
                 TextField(
                   controller: _originController,
+                  onChanged: (_) {
+                    if (_trip.originLocation != null) {
+                      setState(() => _trip.originLocation = null);
+                    }
+                  },
                   decoration: const InputDecoration(
                     labelText: 'Origin / pickup address',
                     hintText: 'Ej. Almacén Central Lima',
@@ -380,12 +490,22 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                   ),
                 ),
                 const SizedBox(height: 12),
+                if (_trip.originLocation case final location?) ...[
+                  Text('${location.siteName} · ${location.clientName}'),
+                  if (_locationStatus(location) case final status?)
+                    Text(status),
+                  if (location.contactLabel.isNotEmpty)
+                    Text(location.contactLabel),
+                ],
                 SizedBox(
                   width: double.infinity,
                   height: 48,
                   child: OutlinedButton.icon(
                     onPressed: _pickDepartureTime,
-                    icon: const Icon(Icons.access_time_outlined, color: AppColors.navy),
+                    icon: const Icon(
+                      Icons.access_time_outlined,
+                      color: AppColors.navy,
+                    ),
                     label: Text(
                       'Departure: ${_formatDeparture(_trip.departure)}',
                       style: const TextStyle(
@@ -404,7 +524,11 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    const Icon(Icons.info_outline, size: 14, color: AppColors.gray),
+                    const Icon(
+                      Icons.info_outline,
+                      size: 14,
+                      color: AppColors.gray,
+                    ),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
@@ -412,9 +536,13 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                             ? 'Equipo asignado: ${_trip.assignedTeam!.name} (${_trip.plate})'
                             : 'Selecciona el equipo vehicular y conductor en la pestaña "Team".',
                         style: TextStyle(
-                          color: _trip.assignedTeam != null ? AppColors.navyDark : AppColors.gray,
+                          color: _trip.assignedTeam != null
+                              ? AppColors.navyDark
+                              : AppColors.gray,
                           fontSize: 12,
-                          fontWeight: _trip.assignedTeam != null ? FontWeight.w600 : FontWeight.normal,
+                          fontWeight: _trip.assignedTeam != null
+                              ? FontWeight.w600
+                              : FontWeight.normal,
                         ),
                       ),
                     ),
@@ -426,63 +554,7 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
 
           const SizedBox(height: 20),
 
-          // Sección de Búsqueda y Mapa Interactivo
-          TextField(
-            decoration: InputDecoration(
-              hintText: 'Search client',
-              prefixIcon: const Icon(Icons.search),
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: Colors.grey),
-              ),
-            ),
-            onChanged: (v) => setState(() => _searchQuery = v),
-          ),
-          const SizedBox(height: 12),
-
-          GestureDetector(
-            onTap: () {
-              if (allLocations.isNotEmpty) {
-                final nextIdx = (allLocations.indexOf(_focusedLocation) + 1) % allLocations.length;
-                setState(() => _focusedLocation = allLocations[nextIdx]);
-              }
-            },
-            child: Container(
-              height: 150,
-              decoration: BoxDecoration(
-                color: const Color(0xFFE6EEF4),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFB0BEC5)),
-              ),
-              child: const Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.map_outlined, size: 44, color: AppColors.navy),
-                  SizedBox(height: 6),
-                  Text(
-                    'Interactive Map',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                      color: AppColors.navyDark,
-                    ),
-                  ),
-                  SizedBox(height: 2),
-                  Text(
-                    'Tap on the map to create a new location',
-                    style: TextStyle(color: AppColors.gray, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Tarjeta de Detalles de Ubicación Enfocada
-          _buildLocationDetailsCard(_focusedLocation),
+          _buildCatalogSelector(),
           const SizedBox(height: 24),
 
           // Sección de Delivery Stops (Detalles de Paradas e Itinerario)
@@ -506,7 +578,7 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
               ),
               child: const Center(
                 child: Text(
-                  'No delivery stops added yet. Select a location from the map or add a stop manually.',
+                  'Todavía no hay paradas. Selecciona una sede o añade una parada manual.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.gray),
                 ),
@@ -515,7 +587,10 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
           else
             Column(
               children: List.generate(_trip.stops.length, (index) {
-                return _buildStopCard(index);
+                return KeyedSubtree(
+                  key: ObjectKey(_trip.stops[index]),
+                  child: _buildStopCard(index),
+                );
               }),
             ),
 
@@ -526,20 +601,19 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
             child: OutlinedButton.icon(
               onPressed: () {
                 setState(() {
-                  _trip.stops.add(
-                    Stop(
-                      'Callao',
-                      'Av. Argentina, Callao',
-                      'Dispatch · 999111222',
-                      [Cargo('Boxes', 1)],
-                    ),
-                  );
+                  _trip.stops.add(Stop('', '', '', [Cargo('Boxes', 1)]));
                 });
               },
-              icon: const Icon(Icons.add_location_alt_outlined, color: AppColors.navy),
+              icon: const Icon(
+                Icons.add_location_alt_outlined,
+                color: AppColors.navy,
+              ),
               label: const Text(
-                'Add delivery stop',
-                style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.navyDark),
+                'Añadir parada manual',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.navyDark,
+                ),
               ),
               style: OutlinedButton.styleFrom(
                 shape: RoundedRectangleBorder(
@@ -548,126 +622,6 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                 side: const BorderSide(color: AppColors.navy),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLocationDetailsCard(ClientLocation loc) {
-    final isSelected = _isLocationSelected(loc);
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade300),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Location Details',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: AppColors.navyDark,
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE8F5E9),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.success),
-                ),
-                child: const Text(
-                  'Active',
-                  style: TextStyle(
-                    color: AppColors.success,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('ID', style: TextStyle(color: AppColors.gray, fontSize: 11)),
-                    Text(loc.id, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                    const SizedBox(height: 8),
-                    const Text('Direction', style: TextStyle(color: AppColors.gray, fontSize: 11)),
-                    Text(loc.siteName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                    const SizedBox(height: 8),
-                    const Text('Latitude', style: TextStyle(color: AppColors.gray, fontSize: 11)),
-                    Text(loc.latitude.toStringAsFixed(4), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Client', style: TextStyle(color: AppColors.gray, fontSize: 11)),
-                    Text(loc.clientName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                    const SizedBox(height: 8),
-                    const Text('Address', style: TextStyle(color: AppColors.gray, fontSize: 11)),
-                    Text(loc.address, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                    const SizedBox(height: 8),
-                    const Text('Longitude', style: TextStyle(color: AppColors.gray, fontSize: 11)),
-                    Text(loc.longitude.toStringAsFixed(4), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 40,
-                  child: ElevatedButton(
-                    onPressed: isSelected ? null : () => _toggleSelectLocation(loc),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.navy,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                    ),
-                    child: const Text('Select'),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: SizedBox(
-                  height: 40,
-                  child: OutlinedButton(
-                    onPressed: !isSelected ? null : () => _toggleSelectLocation(loc),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.navyDark,
-                      side: const BorderSide(color: AppColors.navy),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                    ),
-                    child: const Text('Unselect'),
-                  ),
-                ),
-              ),
-            ],
           ),
         ],
       ),
@@ -728,41 +682,34 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
           ),
           const SizedBox(height: 8),
 
-          DropdownButtonFormField<String>(
-            initialValue: ['Callao', 'Ventanilla', 'Miraflores'].contains(stop.site)
-                ? stop.site
-                : null,
-            decoration: const InputDecoration(
-              labelText: 'Client site (demo)',
+          if (stop.location case final location?) ...[
+            Text('${stop.site} · ${location.clientName}'),
+            Text(stop.address),
+            if (stop.contact.isNotEmpty) Text(stop.contact),
+            if (location.latitude != null)
+              Text('${location.latitude}, ${location.longitude}'),
+            if (_locationStatus(location) case final status?) Text(status),
+          ] else ...[
+            TextFormField(
+              initialValue: stop.site,
+              decoration: const InputDecoration(
+                labelText: 'Nombre de la parada',
+              ),
+              onChanged: (v) => stop.site = v,
             ),
-            items: ['Callao', 'Ventanilla', 'Miraflores']
-                .map((v) => DropdownMenuItem(value: v, child: Text(v)))
-                .toList(),
-            onChanged: (v) {
-              if (v != null) {
-                setState(() {
-                  stop.site = v;
-                  if (v == 'Callao') stop.address = 'Av. Argentina, Callao';
-                  if (v == 'Ventanilla') stop.address = 'Av. Néstor Gambetta, Ventanilla';
-                  if (v == 'Miraflores') stop.address = 'Av. Benavides 1020, Miraflores';
-                });
-              }
-            },
-          ),
-          const SizedBox(height: 12),
-
-          TextFormField(
-            initialValue: stop.address,
-            decoration: const InputDecoration(labelText: 'Address'),
-            onChanged: (v) => stop.address = v,
-          ),
-          const SizedBox(height: 12),
-
-          TextFormField(
-            initialValue: stop.contact,
-            decoration: const InputDecoration(labelText: 'Contact'),
-            onChanged: (v) => stop.contact = v,
-          ),
+            const SizedBox(height: 12),
+            TextFormField(
+              initialValue: stop.address,
+              decoration: const InputDecoration(labelText: 'Dirección'),
+              onChanged: (v) => stop.address = v,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              initialValue: stop.contact,
+              decoration: const InputDecoration(labelText: 'Contacto'),
+              onChanged: (v) => stop.contact = v,
+            ),
+          ],
           const SizedBox(height: 12),
 
           // Lista de Productos
@@ -786,7 +733,9 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                   TextFormField(
                     initialValue: cargo.planned.toString(),
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Planned quantity'),
+                    decoration: const InputDecoration(
+                      labelText: 'Planned quantity',
+                    ),
                     onChanged: (v) => cargo.planned = int.tryParse(v) ?? 1,
                   ),
                   const SizedBox(height: 4),
@@ -798,7 +747,10 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                           stop.cargo.removeAt(pIndex);
                         });
                       },
-                      child: const Text('Remove product', style: TextStyle(color: AppColors.navy)),
+                      child: const Text(
+                        'Remove product',
+                        style: TextStyle(color: AppColors.navy),
+                      ),
                     ),
                   ),
                 ],
@@ -814,7 +766,13 @@ class _RoutePlanningScreenState extends State<RoutePlanningScreen>
                   stop.cargo.add(Cargo('Boxes', 1));
                 });
               },
-              child: const Text('Add product', style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold)),
+              child: const Text(
+                'Add product',
+                style: TextStyle(
+                  color: AppColors.navy,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ),
         ],

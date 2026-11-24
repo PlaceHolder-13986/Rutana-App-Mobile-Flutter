@@ -20,10 +20,26 @@ class Stop {
   List<Cargo> cargo;
   DeliveryResult? result;
   String reason = '';
-  Stop(this.site, this.address, this.contact, this.cargo);
+  final ClientLocation? location;
+
+  Stop(this.site, this.address, this.contact, this.cargo, {this.location});
+
+  factory Stop.fromLocation(ClientLocation location, List<Cargo> cargo) => Stop(
+    location.siteName,
+    location.address,
+    location.contactLabel,
+    cargo,
+    location: location,
+  );
   int get pending => cargo.fold(0, (sum, c) => sum + c.planned - c.delivered);
   Stop copy() =>
-      Stop(site, address, contact, cargo.map((c) => c.copy()).toList())
+      Stop(
+          site,
+          address,
+          contact,
+          cargo.map((c) => c.copy()).toList(),
+          location: location,
+        )
         ..result = result
         ..reason = reason;
 }
@@ -37,6 +53,7 @@ class TripIncident {
 class Trip {
   final String id, company;
   String name = '', origin = '', plate = '', driver = '';
+  ClientLocation? originLocation;
   String routeType = 'Reparto';
   String colorHex = '#003B70';
   DateTime? departure;
@@ -55,6 +72,7 @@ class Trip {
   Trip copy() => Trip(id, company)
     ..name = name
     ..origin = origin
+    ..originLocation = originLocation
     ..plate = plate
     ..driver = driver
     ..routeType = routeType
